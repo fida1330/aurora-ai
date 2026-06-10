@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ur">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Netflix-style App (Enter API Key)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #141414; font-family: system-ui, sans-serif; color: white; }
+        .header { position: fixed; top: 0; width: 100%; background: #000000cc; backdrop-filter: blur(4px); padding: 1rem 3%; display: flex; justify-content: space-between; z-index: 100; }
+        .logo { color: #e50914; font-weight: bold; font-size: 1.6rem; }
+        .nav-links { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+        .search-box { padding: 0.4rem 0.8rem; border-radius: 20px; border: 1px solid #aaa; background: #222; color: white; }
+        .auth-btn { background: #e50914; border: none; padding: 0.4rem 1rem; border-radius: 4px; cursor: pointer; color: white; }
+        .user-area { display: flex; gap: 8px; align-items: center; }
+        .main-content { margin-top: 90px; padding: 0 0 2rem 0; }
+        .row { margin: 2rem 0 0 2%; }
+        .row h2 { margin-bottom: 12px; font-size: 1.3rem; }
+        .movie-slider { display: flex; overflow-x: auto; gap: 12px; padding-bottom: 8px; }
+        .movie-card { flex: 0 0 auto; width: 160px; background: #1f1f1f; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+        .movie-card:hover { transform: scale(1.03); }
+        .movie-card img { width: 100%; height: 240px; object-fit: cover; border-radius: 8px 8px 0 0; }
+        .movie-info { padding: 8px; }
+        .movie-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .watchlist-btn { background: none; border: 1px solid gray; color: white; padding: 4px; border-radius: 4px; width: 100%; margin-top: 6px; cursor: pointer; font-size: 0.7rem; }
+        .watchlist-btn.added { background: #e50914; border-color: #e50914; }
+        .modal, .key-modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.9); justify-content: center; align-items: center; z-index: 200; }
+        .modal-content, .key-card { background: #181818; max-width: 500px; width: 90%; border-radius: 12px; padding: 1.5rem; text-align: center; }
+        .key-card input { width: 100%; padding: 12px; margin: 16px 0; background: #333; border: none; color: white; border-radius: 6px; }
+        button { background: #e50914; border: none; padding: 8px 16px; color: white; border-radius: 6px; cursor: pointer; }
+        @media (max-width:600px){ .movie-card { width: 130px; } .movie-card img { height: 190px; } }
+    </style>
+</head>
+<body>
+<div class="header">
+    <div class="logo">FLIXSTYLE</div>
+    <div class="nav-links">
+        <input type="text" id="searchInput" class="search-box" placeholder="Search...">
+        <div id="authContainer"><button id="showLoginBtn" class="auth-btn">Sign In</button></div>
+    </div>
+</div>
+<div class="main-content" id="mainContent"></div>
+<div id="movieModal" class="modal"><div class="modal-content"><img id="modalImg" style="width:100%;max-height:300px;object-fit:cover"><div id="modalBody"><h2 id="modalTitle"></h2><p id="modalOverview"></p><button onclick="closeModal()">Close</button></div></div></div>
+<div id="keyModal" class="key-modal"><div class="key-card"><h3>🔑 Enter your TMDB API Key</h3><p style="font-size:0.8rem; margin-top:8px;">Get it free from <a href="https://www.themoviedb.org/signup" target="_blank" style="color:#e50914">TMDB</a> → Settings → API</p><input type="text" id="apiKeyInput" placeholder="Paste your API key here"><button id="saveKeyBtn">Save & Start</button></div></div>
+
+<script>
+    let TMDB_API_KEY = localStorage.getItem('tmdb_api_key');
+    let currentUser = null, watchlist = [];
+    const BASE_IMG = 'https://image.tmdb.org/t/p/w300';
+
+    function showKeyModal() { document.getElementById('keyModal').style.display = 'flex'; }
+    function hideKeyModal() { document.getElementById('keyModal').style.display = 'none'; }
+
+    document.getElementById('saveKeyBtn')?.addEventListener('click', () => {
+        const key = document.getElementById('apiKeyInput').value.trim();
+        if(!key) return alert('Please enter a valid key');
+        TMDB_API_KEY = key;
+        localStorage.setItem('tmdb_api_key', key);
+        hideKeyModal();
+        initApp();
+    });
+
+    async function fetchMovies(url) { if(!TMDB_API_KEY) return []; try { const res = await fetch(url); const d=await res.json(); return d.results||[]; } catch(e){return[];} }
+
+    async function renderRow(title, apiUrl, rowId, isMyList=false) {
+        let movies = [];
+        if(isMyList && currentUser) {
+            if(watchlist.length===0) { document.getElementById(rowId)?.remove(); return; }
+            const promises = watchlist.map(id=>fetch(`https://api.themoviedb.org/3/movie/${id}?api_key=${TMDB_API_KEY}&language=en`).then(r=>r.json()));
+            movies = await Promise.all(promises);
+        } else if(!isMyList) movies = await fetchMovies(apiUrl);
+        if(movies.length===0 && !isMyList) return;
+        let rowDiv = document.getElementById(rowId);
+        if(!rowDiv) {
+            const main = document.getElementById('mainContent');
+            const newRow = document.createElement('div'); newRow.className='row'; newRow.id=rowId;
+            newRow.innerHTML = `<h2>${title}</h2><div class="movie-slider" id="slider-${rowId}"></div>`;
+            main.appendChild(newRow); rowDiv=newRow;
+        }
+        const slider = document.getElementById(`slider-${rowId}`);
+        if(!slider) return;
+        slider.innerHTML='';
+        movies.forEach(m=>{ if(!m.poster_path) return;
+            const card = document.createElement('div'); card.className='movie-card';
+            card.innerHTML = `<img src="${BASE_IMG+m.poster_path}"><div class="movie-info"><div class="movie-title">${m.title}</div><button class="watchlist-btn ${watchlist.includes(m.id)?'added':''}" data-id="${m.id}">${watchlist.includes(m.id)?'✔ My List':'+ My List'}</button></div>`;
+            card.querySelector('img').onclick=()=>showModal(m);
+            card.querySelector('button').onclick=(e)=>{ e.stopPropagation(); toggleWatchlist(m.id, e.target); };
+            slider.appendChild(card);
+        });
+    }
+
+    async function renderMyList() { if(currentUser && watchlist.length) await renderRow('📋 My List', '', 'myListRow', true); else document.getElementById('myListRow')?.remove(); }
+
+    async function loadAll() { if(!TMDB_API_KEY) return; const main=document.getElementById('mainContent'); main.innerHTML=''; await renderRow('🔥 Trending', `https://api.themoviedb.org/3/trending/movie/day?api_key=${TMDB_API_KEY}`, 'trendRow'); await renderRow('⭐ Top Rated', `https://api.themoviedb.org/3/movie/top_rated?api_key=${TMDB_API_KEY}`, 'topRow'); await renderRow('💥 Action', `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&with_genres=28`, 'actionRow'); await renderRow('😂 Comedy', `https://api.themoviedb.org/3/discover/movie?api_key=${TMDB_API_KEY}&with_genres=35`, 'comedyRow'); await renderMyList(); }
+
+    function showModal(m){ document.getElementById('modalImg').src = m.backdrop_path?`https://image.tmdb.org/t/p/original${m.backdrop_path}`:BASE_IMG+m.poster_path; document.getElementById('modalTitle').innerText=m.title; document.getElementById('modalOverview').innerText=m.overview||'No info'; document.getElementById('movieModal').style.display='flex'; }
+    function closeModal(){ document.getElementById('movieModal').style.display='none'; }
+    window.closeModal=closeModal;
+
+    function toggleWatchlist(id, btn) { if(!currentUser){ alert('Sign in first'); return; } if(watchlist.includes(id)){ watchlist=watchlist.filter(i=>i!==id); btn.classList.remove('added'); btn.innerText='+ My List'; } else { watchlist.push(id); btn.classList.add('added'); btn.innerText='✔ My List'; } localStorage.setItem(`watchlist_${currentUser.email}`,JSON.stringify(watchlist)); renderMyList(); }
+
+    function loadUser(){ const u=localStorage.getItem('netflix_user'); if(u){ currentUser=JSON.parse(u); const w=localStorage.getItem(`watchlist_${currentUser.email}`); watchlist=w?JSON.parse(w):[]; document.getElementById('authContainer').innerHTML=`<div class="user-area"><span>${currentUser.name}</span><button id="logoutBtn" class="auth-btn" style="background:#333">Logout</button></div>`; document.getElementById('logoutBtn')?.addEventListener('click',()=>{ localStorage.removeItem('netflix_user'); location.reload(); }); } else { currentUser=null; watchlist=[]; document.getElementById('authContainer').innerHTML='<button id="showLoginBtn" class="auth-btn">Sign In</button>'; document.getElementById('showLoginBtn')?.addEventListener('click',()=>{ const name=prompt("Enter your name:"); if(name){ const email=prompt("Enter email (any):"); if(email){ currentUser={name,email}; localStorage.setItem('netflix_user',JSON.stringify(currentUser)); localStorage.setItem(`watchlist_${email}`,JSON.stringify([])); location.reload(); } } }); } loadAll(); }
+
+    async function searchMovies(q){ if(!TMDB_API_KEY) return; if(!q.trim()){ loadAll(); return; } const url=`https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}`; const movies=await fetchMovies(url); const main=document.getElementById('mainContent'); main.innerHTML=`<div class="row"><h2>🔍 Search: ${q}</h2><div class="movie-slider" id="searchSlider"></div></div>`; const slider=document.getElementById('searchSlider'); slider.innerHTML=''; movies.forEach(m=>{ if(!m.poster_path) return; const card=document.createElement('div'); card.className='movie-card'; card.innerHTML=`<img src="${BASE_IMG+m.poster_path}"><div class="movie-info"><div class="movie-title">${m.title}</div><button class="watchlist-btn ${watchlist.includes(m.id)?'added':''}" data-id="${m.id}">${watchlist.includes(m.id)?'✔ My List':'+ My List'}</button></div>`; card.querySelector('img').onclick=()=>showModal(m); card.querySelector('button').onclick=(e)=>{ e.stopPropagation(); toggleWatchlist(m.id, e.target); }; slider.appendChild(card); }); }
+
+    function initApp() { if(!TMDB_API_KEY) showKeyModal(); else { loadUser(); document.getElementById('searchInput').addEventListener('input',(e)=>{ clearTimeout(window._deb); window._deb=setTimeout(()=>searchMovies(e.target.value),500); }); } }
+    initApp();
+</script>
+</body>
+</html>
